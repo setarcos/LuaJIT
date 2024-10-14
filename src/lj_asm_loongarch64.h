@@ -890,23 +890,30 @@ static void asm_hrefk(ASMState *as, IRIns *ir)
 static void asm_uref(ASMState *as, IRIns *ir)
 {
   Reg dest = ra_dest(as, ir, RSET_GPR);
-  if (irref_isk(ir->op1)) {
+  int guarded = (irt_t(ir->t) & (IRT_GUARD|IRT_TYPE)) == (IRT_GUARD|IRT_PGC);
+  if (irref_isk(ir->op1) && !guarded) {
     GCfunc *fn = ir_kfunc(IR(ir->op1));
     MRef *v = &gcref(fn->l.uvptr[(ir->op2 >> 8)])->uv.v;
     emit_lsptr(as, LOONGI_LD_D, dest, v, RSET_GPR);
   } else {
-    Reg uv = ra_scratch(as, RSET_GPR);
-    Reg func = ra_alloc1(as, ir->op1, RSET_GPR);
-    if (ir->o == IR_UREFC) {
-      Reg tmp = ra_scratch(as, rset_exclude(rset_exclude(RSET_GPR, dest), uv));
-      asm_guard(as, LOONGI_BEQ, tmp, RID_ZERO);
-      emit_dji(as, LOONGI_ADDI_D, dest, uv, ((int32_t)offsetof(GCupval, tv))&0xfff);
-      emit_dji(as, LOONGI_LD_BU, tmp, uv, ((int32_t)offsetof(GCupval, closed))&0xfff);
+    Reg tmp = ra_scratch(as, rset_exclude(RSET_GPR, dest));
+    if (guarded)
+      asm_guard(as, ir->o == IR_UREFC ? LOONGI_BEQ : LOONGI_BNE, tmp, RID_ZERO);
+    if (ir->o == IR_UREFC)
+      emit_dji(as, LOONGI_ADDI_D, dest, dest, ((int32_t)offsetof(GCupval, tv))&0xfff);
+    else
+      emit_dji(as, LOONGI_LD_D, dest, dest, ((int32_t)offsetof(GCupval, tv))&0xfff);
+    if (guarded)
+      emit_dji(as, LOONGI_LD_BU, tmp, dest, ((int32_t)offsetof(GCupval, closed))&0xfff);
+    if (irref_isk(ir->op1)) {
+      GCfunc *fn = ir_kfunc(IR(ir->op1));
+      GCobj *o = gcref(fn->l.uvptr[(ir->op2 >> 8)]);
+      emit_loada(as, dest, o);
     } else {
-      emit_dji(as, LOONGI_LD_D, dest, uv, ((int32_t)offsetof(GCupval, v))&0xfff);
+      emit_lso(as, LOONGI_LD_D, dest, ra_alloc1(as, ir->op1, RSET_GPR),
+              (int32_t)offsetof(GCfuncL, uvptr) +
+              (int32_t)sizeof(MRef) * (int32_t)(ir->op2 >> 8), RSET_GPR);
     }
-    emit_lso(as, LOONGI_LD_D, uv, func, (int32_t)offsetof(GCfuncL, uvptr) +
-      (int32_t)sizeof(MRef) * (int32_t)(ir->op2 >> 8), RSET_GPR);
   }
 }
 
