@@ -112,15 +112,15 @@ typedef struct {
 #define EXITSTATE_CHECKEXIT	1
 
 /* Return the address of a per-trace exit stub. */
-static LJ_AINLINE uint32_t *exitstub_trace_addr_(uint32_t *p)
+static LJ_AINLINE uint32_t *exitstub_trace_addr_(uint32_t *p, uint32_t exitno)
 {
   while (*p == 0x03400000) p++;		/* Skip LOONGI_NOP. */
-  return p;
+  return p + 5 + exitno;
 }
 
 /* Avoid dependence on lj_jit.h if only including lj_target.h. */
 #define exitstub_trace_addr(T, exitno) \
-  exitstub_trace_addr_((MCode *)((char *)(T)->mcode + (T)->szmcode))
+  exitstub_trace_addr_((MCode *)((char *)(T)->mcode + (T)->szmcode), (exitno))
 
 /* -- Instructions -------------------------------------------------------- */
 
@@ -165,6 +165,7 @@ typedef enum LOONGIns {
   LOONGI_SUB_W = 0x00110000,
   LOONGI_MUL_W = 0x001c0000,
   LOONGI_MULH_W = 0x001c8000,
+  LOONGI_MULW_D_W = 0x001f0000,
   LOONGI_DIV_W = 0x00200000,
   LOONGI_DIV_WU = 0x00210000,
 

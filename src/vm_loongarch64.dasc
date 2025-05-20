@@ -308,7 +308,7 @@
 |.endmacro
 |
 |// Set current VM state. Uses TMP0.
-|.macro li_vmstate, st; addi.w TMP0, r0, ~LJ_VMST_..st; .endmacro
+|.macro li_vmstate, st; l12i TMP0, ~LJ_VMST_..st; .endmacro
 |.macro st_vmstate; st.d TMP0, GL->vmstate; .endmacro
 |
 |// Move table write barrier back. Overwrites mark and tmp.
@@ -353,8 +353,7 @@
 |.endmacro
 |.macro checknum, reg, target
 |  gettp TMP4, reg
-|  sltui TMP4, TMP4, LJ_TISNUM
-|  beqz TMP4, target
+|  bgeu TMP4, TISNUM, target
 |.endmacro
 |
 |.macro mov_false, reg
@@ -396,7 +395,7 @@ static void build_subroutines(BuildCtx *ctx)
   |->vm_returnc:
   |  addi.w RD, RD, 8			// RD = (nresults+1)*8.
   |  andi TMP0, PC, FRAME_TYPE
-  |  addi.w CRET1, r0, LUA_YIELD
+  |  l12i CRET1, LUA_YIELD
   |  beqz RD, ->vm_unwind_c_eh
   |  mv MULTRES, RD
   |  beqz TMP0, ->BC_RET_Z		// Handle regular return to Lua.
@@ -404,7 +403,7 @@ static void build_subroutines(BuildCtx *ctx)
   |->vm_return:
   |  // BASE = base, RA = resultptr, RD/MULTRES = (nresults+1)*8, PC = return
   |  // TMP0 = PC & FRAME_TYPE
-  |  addi.w TMP2, r0, -8		// TMP2 = 0xfffffff8
+  |  l12i TMP2, ~FRAME_TYPEP		// TMP2 = 0xfffffff8
   |  xori TMP0, TMP0, FRAME_C
   |  and TMP2, PC, TMP2
   |  sub.d TMP2, BASE, TMP2		// TMP2 = previous base.
@@ -481,7 +480,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  mv CRET1, CARG2
   |->vm_unwind_c_eh:			// Landing pad for external unwinder.
   |  ld.d L, SAVE_L(sp)
-  |  addi.w TMP0, r0, ~LJ_VMST_C
+  |  l12i TMP0, ~LJ_VMST_C
   |  ld.d GL, L->glref
   |  st.w TMP0, GL->vmstate
   |  b ->vm_leave_unw
@@ -1076,7 +1075,7 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |.ffunc_1 type
   |  gettp TMP0, CARG1
-  |  addi.w TMP1, r0, ~LJ_TISNUM
+  |  l12i TMP1, ~LJ_TISNUM
   |  sltu TMP2, TISNUM, TMP0
   |  nor TMP3, TMP0, r0
   |  masknez TMP1, TMP1, TMP2
@@ -1110,7 +1109,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  slli.d TMP1, TMP1, 3
   |  sub.d TMP1, TMP0, TMP1
   |  add.d NODE:TMP2, NODE:TMP2, TMP1	// node = tab->node + (idx*32-idx*8)
-  |  addi.w CARG4, r0, LJ_TSTR
+  |  l12i CARG4, LJ_TSTR
   |  settp STR:RC, CARG4		// Tagged key to look for.
   |3:  // Rearranged logic, because we expect _not_ to find the key.
   |  ld.d TMP0, NODE:TMP2->key
@@ -1219,21 +1218,20 @@ static void build_subroutines(BuildCtx *ctx)
   |  mv CARG1, TISNIL
   |  beqz TMP1, ->fff_restv		// End of traversal: return nil.
   |  ld.d CFUNC:RB, FRAME_FUNC(BASE)
-  |  addi.w RC, r0, 2*8
+  |  l12i RC, 2*8
   |  cleartp CFUNC:RB
   |  b ->fff_fallback			// Invalid key.
   |
   |.ffunc_1 pairs
   |  checktp TAB:TMP1, CARG1, -LJ_TTAB, ->fff_fallback
   |  ld.d PC, FRAME_PC(BASE)
+  |  addi.d RA, BASE, -16
 #if LJ_52
   |  ld.d TAB:TMP2, TAB:TMP1->metatable
   |  ld.d TMP0, CFUNC:RB->upvalue[0]
-  |  addi.d RA, BASE, -16
   |  bnez TAB:TMP2, ->fff_fallback
 #else
   |  ld.d TMP0, CFUNC:RB->upvalue[0]
-  |  addi.d RA, BASE, -16
 #endif
   |  st.d TISNIL, 0(BASE)
   |  st.d CARG1, -8(BASE)
@@ -1442,7 +1440,7 @@ static void build_subroutines(BuildCtx *ctx)
   |.if resume
   |  addi.d TMP3, TMP3, -8
   |  mov_false TMP1
-  |  addi.w RD, r0, (2+1)*8
+  |  l12i RD, (2+1)*8
   |  ld.d TMP0, 0(TMP3)
   |  st.d TMP3, L:RA->top		// Remove error from coroutine stack.
   |  st.d TMP0, 0(BASE)			// Copy error message.
@@ -1467,7 +1465,7 @@ static void build_subroutines(BuildCtx *ctx)
   |.ffunc coroutine_yield
   |  ld.d TMP0, L->cframe
   |  add.d TMP1, BASE, NARGS8:RC
-  |  addi.w CRET1, r0, LUA_YIELD
+  |  l12i CRET1, LUA_YIELD
   |  st.d BASE, L->base
   |  andi TMP0, TMP0, CFRAME_RESUME
   |  st.d TMP1, L->top
@@ -1719,7 +1717,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  gettp TMP1, CARG1
   |  blt TMP0, r0, ->fff_fallback
   |  cleartp STR:CARG1, CARG1
-  |  addi.w CARG4, r0, -1
+  |  l12i CARG4, -1
   |  beqz TMP0, >1
   |  slli.w CARG4, CARG3, 0
   |  checkint CARG3, ->fff_fallback
@@ -2074,8 +2072,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  add.d RA, RA, RB
   |  add.d RA, BASE, RA
   |3:
-  |  sltu TMP1, RC, RA
-  |  bnez TMP1, >9			// More results wanted?
+  |  bltu RC, RA, >9			// More results wanted?
   |
   |  ld.hu TMP3, TRACE:TMP2->traceno
   |  ld.hu RD, TRACE:TMP2->link
@@ -2125,7 +2122,6 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |->vm_exit_handler:
   |.if JIT
-  |  ld.w ra, 4(sp)			// li TMP, traceno
   |  addi.d sp, sp, -(32*8+32*8)
   |  savex_ 0, 2
   |  savex_ 4, 5
@@ -2149,12 +2145,16 @@ static void build_subroutines(BuildCtx *ctx)
   |  st.d TMP2, 32*8+3*8(sp)		// Store sp in RID_SP
   |  li_vmstate EXIT
   |  add32i_d DISPATCH, GL, GG_G2DISP
-  |  ld.w TMP1, 0(TMP2)			// Load exit number.
+  |  ld.d TMP1, 0(TMP2)			// Load trampoline pc
+  |  ld.w TMP3, 8(TMP2)			// Load trace number
   |  st_vmstate
   |  ld.d L, GL->cur_L
   |  ld.d BASE, GL->jit_base
+  |  sub.d TMP1, TMP1, ra
   |  st.d L, GL_J(L)(GL)
-  |  st.w ra, DISPATCH_J(parent)(DISPATCH)	// Store trace number.
+  |  srli.d TMP1, TMP1, 2
+  |  st.w TMP3, DISPATCH_J(parent)(DISPATCH)	// Store trace number.
+  |  addi.d TMP1, TMP1, -1
   |  st.d BASE, L->base
   |  st.w TMP1, DISPATCH_J(exitno)(DISPATCH)	// Store exit number.
   |  addi.d CARG1, GL, GG_G2J
@@ -2163,7 +2163,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  bl extern lj_trace_exit		// (jit_State *J, ExitState *ex)
   |  // Returns MULTRES (unscaled) or negated error code.
   |  ld.d TMP1, L->cframe
-  |  l12i TMP2, -4
+  |  l12i TMP2, CFRAME_RAWMASK
   |  ld.d BASE, L->base
   |  and sp, TMP1, TMP2
   |  ld.d PC, SAVE_PC(sp)		// Get SAVE_PC.
@@ -2461,10 +2461,9 @@ static void build_subroutines(BuildCtx *ctx)
   |1:
   |  ld.d TMP0, 0(TMP1)
   |  addi.d TMP1, TMP1, 8
-  |  sltu TMP4, TMP1, TMP3
   |  st.d TMP0, 0(TMP2)
   |  addi.d TMP2, TMP2, 8
-  |  bnez TMP4, <1
+  |  bltu TMP1, TMP3, <1
   |2:
   |  beqz CARG3, >3
   |  fld.d FARG1, CCSTATE->fpr[0]
@@ -2548,13 +2547,12 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ins_next
     |
     |2:  // RA is not an integer.
-    |  sltui TMP1, CARG3, LJ_TISNUM
-    |  beqz TMP1, ->vmeta_comp
-    |  sltui TMP1, CARG4, LJ_TISNUM
+    |  bgeu CARG3, TISNUM, ->vmeta_comp
     |  decode_BC4b TMP2
-    |  beqz TMP1, >4
+    |  bgeu CARG4, TISNUM, >4
     |  movgr2fr.d FTMP0, CARG1
     |  movgr2fr.d FTMP2, CARG2
+    |
     |3:  // RA and RD are both numbers.
     if (op == BC_ISLT || op == BC_ISGE) {
       |  fcmp.clt.d FCC0, FTMP0, FTMP2
@@ -2585,8 +2583,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  b <3
     |
     |5:  // RA is an integer, RD is not an integer
-    |  sltui TMP1, CARG4, LJ_TISNUM
-    |  beqz TMP1, ->vmeta_comp
+    |  bgeu CARG4, TISNUM, ->vmeta_comp
     |  // RA is an integer, RD is a number. Convert RA to a number.
     if (op == BC_ISLT || op == BC_ISGE) {
       |  movgr2fr.w FTMP0, CARG1
@@ -2622,7 +2619,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |// Either or both types are not numbers.
     |.if FFI
     |  // Check if RA or RD is a cdata.
-    |  addi.w TMP0, r0, LJ_TCDATA
+    |  l12i TMP0, LJ_TCDATA
     |  beq CARG3, TMP0, ->vmeta_equal_cd
     |  beq CARG4, TMP0, ->vmeta_equal_cd
     |.endif
@@ -2654,13 +2651,13 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
       |  beqz TAB:TMP3, <1		// No metatable?
       |  ld.bu TMP3, TAB:TMP3->nomm
       |  andi TMP3, TMP3, 1<<MM_eq
-      |  addi.w TMP0, r0, 0		// ne = 0
+      |  l12i TMP0, 0			// ne = 0
       |  bnez TMP3, <1			// Or 'no __eq' flag set?
     } else {
       |  beqz TAB:TMP3,->BC_ISEQV_Z	// No metatable?
       |  ld.bu TMP3, TAB:TMP3->nomm
       |  andi TMP3, TMP3, 1<<MM_eq
-      |  addi.w TMP0, r0, 1		// ne = 1
+      |  l12i TMP0, 1			// ne = 1
       |  bnez TMP3, ->BC_ISEQV_Z	// Or 'no __eq' flag set?
     }
     |  b ->vmeta_equal			// Handle __eq metamethod.
@@ -2677,9 +2674,9 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ld.d CARG2, -8(RD)		// KBASE-8-str_const*8
     |.if FFI
     |  gettp CARG3, CARG1
-    |  addi.w TMP1, r0, LJ_TCDATA
+    |  l12i TMP1, LJ_TCDATA
     |.endif
-    |  addi.w TMP0, r0, LJ_TSTR
+    |  l12i TMP0, LJ_TSTR
     |  decode_BC4b TMP2
     |  settp CARG2, TMP0
     |.if FFI
@@ -2731,11 +2728,10 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ins_next
     |
     |4:  // RA is not an integer.
-    |  sltu TMP0, CARG3, TISNUM
     |.if FFI
-    |  beqz TMP0, >7
+    |  bgeu CARG3, TISNUM, >7
     |.else
-    |  beqz TMP0, <2
+    |  bgeu CARG3, TISNUM, <2
     |.endif
     |  movgr2fr.d FTMP0, CARG1
     |  movgr2fr.d FTMP2, CARG2
@@ -2749,11 +2745,10 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  b <1
     |
     |6:  // RA is an integer, RD is a number.
-    |  sltu TMP0, CARG4, TISNUM
     |.if FFI
-    |  beqz TMP0, >8
+    |  bgeu CARG4, TISNUM, >8
     |.else
-    |  beqz TMP0, <2
+    |  bgeu CARG4, TISNUM, <2
     |.endif
     |  movgr2fr.w FTMP0, CARG1
     |  movgr2fr.d FTMP2, CARG2
@@ -2762,12 +2757,12 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |
     |.if FFI
     |7:	// RA not int, not number
-    |  addi.w TMP0, r0, LJ_TCDATA
+    |  l12i TMP0, LJ_TCDATA
     |  bne CARG3, TMP0, <2
     |  b ->vmeta_equal_cd
     |
     |8:	// RD not int, not number
-    |  addi.w TMP0, r0, LJ_TCDATA
+    |  l12i TMP0, LJ_TCDATA
     |  bne CARG4, TMP0, <2
     |  b ->vmeta_equal_cd
     |.endif
@@ -2785,7 +2780,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  addi.d PC, PC, 4
     |  xor TMP0, TMP1, TMP0		// TMP0=0 A=D; TMP0~=0 A~=D
     |.if FFI
-    |  addi.w TMP3, r0, LJ_TCDATA
+    |  l12i TMP3, LJ_TCDATA
     |  beq TMP1, TMP3, ->vmeta_equal_cd
     |.endif
     |  decode_BC4b TMP2
@@ -2809,7 +2804,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  addi.d PC, PC, 4
     |  gettp TMP0, CRET1
     |  add.d RA, BASE, RA
-    |  sltui TMP0, TMP0, LJ_TISTRUECOND	// TMP0=1 true; TMP0=0 false
+    |  sltui TMP0, TMP0, LJ_TISTRUECOND			// TMP0=1 true; TMP0=0 false
     |  decode_BC4b TMP2
     |  addu16i.d TMP2, TMP2, -(BCBIAS_J*4 >> 16)	// jump - 0x8000<<2
     if (op == BC_IST || op == BC_ISTC) {
@@ -2887,9 +2882,8 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  settp TMP0, TISNUM
     |  b >2
     |1:
-    |  sltui TMP3, CARG3, LJ_TISNUM
     |  slli.d TMP1, TMP1, 32
-    |  beqz TMP3, ->vmeta_unm
+    |  bgeu CARG3, TISNUM, ->vmeta_unm
     |  xor TMP0, TMP0, TMP1		// sign => ~sign
     |2:
     |  st.d TMP0, 0(RA)
@@ -3088,7 +3082,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
   case BC_KSTR:
     |  // RA = dst*8, RD = str_const*8 (~)
     |  sub.d TMP1, KBASE, RD
-    |  addi.w TMP2, r0, LJ_TSTR
+    |  l12i TMP2, LJ_TSTR
     |  ld.d TMP0, -8(TMP1)		// KBASE-8-str_const*8
     |  add.d RA, BASE, RA
     |  settp TMP0, TMP2
@@ -3100,7 +3094,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  // RA = dst*8, RD = cdata_const*8 (~)
     |  sub.d TMP1, KBASE, RD
     |  ld.d TMP0, -8(TMP1)		// KBASE-8-cdata_const*8
-    |  addi.w TMP2, r0, LJ_TCDATA
+    |  l12i TMP2, LJ_TCDATA
     |  add.d RA, BASE, RA
     |  settp TMP0, TMP2
     |  st.d TMP0, 0(RA)
@@ -4305,7 +4299,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
 
   case BC_IFUNCV:
     |  // BASE = new base, RA = BASE+framesize*8, RB = LFUNC, RC = nargs*8
-    |  addi.w TMP0, r0, LJ_TFUNC
+    |  l12i TMP0, LJ_TFUNC
     |  add.d TMP1, BASE, RC
     |  ld.d TMP2, L->maxstack
     |  settp LFUNC:RB, TMP0
@@ -4352,7 +4346,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  add.d RC, BASE, NARGS8:RC
     |  st.d BASE, L->base		// base of currently excuting function
     |  st.d RC, L->top
-    |  li_vmstate C			// addi.w TMP0, r0, ~LJ_VMST_C
+    |  li_vmstate C			// l12i TMP0, ~LJ_VMST_C
     if (op == BC_FUNCCW) {
       |  ld.d CARG2, CFUNC:RB->f
     }
