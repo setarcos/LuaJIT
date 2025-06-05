@@ -2383,8 +2383,9 @@ static void build_subroutines(BuildCtx *ctx)
   |.if FFI
   |.type CTSTATE, CTState, PC
   |  saveregs
-  |  ld.d CTSTATE, GL:r17->ctype_state
-  |  add32i_d DISPATCH, r17, GG_G2DISP
+  |  or GL, r17, r0
+  |  ld.d CTSTATE, GL->ctype_state
+  |  add32i_d DISPATCH, GL, GG_G2DISP
   |  st.w r19, CTSTATE->cb.slot
   |  st.d CARG1, CTSTATE->cb.gpr[0]
   |  fst.d FARG1, CTSTATE->cb.fpr[0]
@@ -2874,7 +2875,6 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ld.d TMP0, 0(RB)
     |  addu16i.d TMP1, r0, 0x8000
     |  gettp CARG3, TMP0
-    |  slli.w TMP0, TMP0, 0
     |  bne CARG3, TISNUM, >1
     |  beq TMP0, TMP1, ->vmeta_unm      // Meta handler deals with -2^31.
     |  sub.w TMP0, r0, TMP0
@@ -3864,7 +3864,6 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  add.d TMP0, PC, TMP0
     |  ld.d CARG2, -16(RA)
     |  ld.d CARG3, -8(RA)
-    |  addu16i.d PC, TMP0, -(BCBIAS_J*4 >> 16)	// jump - 0x8000<<2
     |  checkfunc CFUNC:CARG1, >5
     |  gettp CARG2, CARG2
     |  addi.d CARG2, CARG2, -LJ_TTAB
@@ -3876,6 +3875,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  lu12i.w TMP1, 0xfffe7		// LJ_KEYINDEX >> 12
     |  bnez TMP3, >5
     |  ori TMP1, TMP1, (LJ_KEYINDEX & 0xfff)
+    |  addu16i.d PC, TMP0, -(BCBIAS_J*4 >> 16)	// jump - 0x8000<<2
     |  slli.d TMP1, TMP1, 32
     |  st.d TMP1, -8(RA)
     |1:
@@ -3884,6 +3884,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  l12i TMP3, BC_JMP
     |  l12i TMP1, BC_ITERC
     |  st.b TMP3, -4+OFS_OP(PC)
+    |  addu16i.d PC, TMP0, -(BCBIAS_J*4 >> 16)	// jump - 0x8000<<2
     |.if JIT
     |  ld.b TMP0, OFS_OP(PC)
     |  l12i TMP3, BC_ITERN
