@@ -2351,6 +2351,45 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |
   |//-----------------------------------------------------------------------
+  |//-- Number conversion functions ----------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |// int64_t lj_vm_num2int_check(double x)
+  |->vm_num2int_check:
+  |  ftintrz.w.d FTMP0, FARG1
+  |  movfr2gr.s CRET1, FTMP0
+  |  ffint.d.w FTMP1, FTMP0
+  |  fcmp.ceq.d FCC0, FARG1, FTMP1
+  |  bceqz FCC0, >1
+  |  jirl r0, ra, 0
+  |1:
+  |  lu12i.w CRET1, 0x80000
+  |  lu32i.d CRET1, 0x80000
+  |  jirl r0, ra, 0
+  |
+  |// int64_t lj_vm_num2i64(double x)
+  |->vm_num2i64:
+  |  ftintrz.l.d FRET1, FARG1
+  |  jirl r0, ra, 0
+  |
+  |// uint64_t lj_vm_num2u64(double x)
+  |->vm_num2u64:
+  |  ftintrz.l.d FTMP0, FARG1
+  |  movfr2gr.d CRET1, FTMP0
+  |  fcvt.ud.d FTMP1, FARG1
+  |  movfr2gr.d TMP0, FTMP1
+  |  beq CRET1, TMP0, >1
+  |  or CRET1, TMP0, r0
+  |1:
+  |  jirl r0, ra, 0
+  |
+  |// int32_t lj_vm_tobit(double x)
+  |->vm_tobit:
+  |  fadd.d FTMP0, FARG1, TOBIT
+  |  movfr2gr.s CRET1, FTMP0
+  |  jirl r0, ra, 0
+  |
+  |//-----------------------------------------------------------------------
   |//-- Miscellaneous functions --------------------------------------------
   |//-----------------------------------------------------------------------
   |

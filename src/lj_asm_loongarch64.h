@@ -1872,15 +1872,22 @@ static void asm_tail_fixup(ASMState *as, TraceNo lnk)
 }
 
 /* Prepare tail of code. */
-static void asm_tail_prep(ASMState *as)
+static void asm_tail_prep(ASMState *as, TraceNo lnk)
 {
   MCode *p = as->mctop - 1;  /* Leave room for exit branch. */
   if (as->loopref) {
     as->invmcp = as->mcp = p;
   } else {
-    as->mcp = p-1;  /* Leave room for stack pointer adjustment. */
+    if (!lnk) {
+      MCode *target = (MCode *)(void *)lj_vm_exit_interp;
+      ptrdiff_t delta = target - (p - 1);
+      if (!LOONGF_S_OK(delta>>2, 26)) p--;
+    }
+    p--;  /* Leave room for stack pointer adjustment. */
+    as->mcp = p;
     as->invmcp = NULL;
   }
+  as->mctail = p;
   *p = LOONGI_NOP;  /* Prevent load/store merging. */
 }
 

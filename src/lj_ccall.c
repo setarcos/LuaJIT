@@ -1,6 +1,6 @@
 /*
 ** FFI C call handling.
-** Copyright (C) 2005-2025 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #include "lj_obj.h"
@@ -168,7 +168,9 @@
     if (ccall_struct_arg(cc, cts, d, rcl, o, narg)) goto err_nyi; \
     nsp = cc->nsp; ngpr = cc->ngpr; nfpr = cc->nfpr; \
     continue; \
-  }  /* Pass all other structs by value on stack. */
+  } else {  /* Pass all other structs by value on stack. */ \
+    onstack = 1; \
+  }
 
 #define CCALL_HANDLE_COMPLEXARG \
   isfp = 2;  /* Pass complex in FPRs or on stack. Needs postprocessing. */
@@ -183,7 +185,7 @@
     } \
   } else {  /* Try to pass argument in GPRs. */ \
     /* Note that reordering is explicitly allowed in the x64 ABI. */ \
-    if (n <= 2 && ngpr + n <= maxgpr) { \
+    if (!onstack && n <= 2 && ngpr + n <= maxgpr) { \
       dp = &cc->gpr[ngpr]; \
       ngpr += n; \
       goto done; \
@@ -350,7 +352,7 @@
       nfpr = CCALL_NARG_FPR;  /* Prevent reordering. */ \
     } \
   } else {  /* Try to pass argument in GPRs. */ \
-    if (!LJ_TARGET_OSX && (d->info & CTF_ALIGN) > CTALIGN_PTR) \
+    if (!LJ_TARGET_OSX && !rp && ccall_struct_align(cts, d) > CTALIGN_PTR) \
       ngpr = (ngpr + 1u) & ~1u;  /* Align to regpair. */ \
     if (ngpr + n <= maxgpr) { \
       dp = &cc->gpr[ngpr]; \
@@ -750,7 +752,7 @@ static int ccall_classify_struct(CTState *cts, CType *ct, int *rcl, CTSize ofs)
     fofs = ofs+ct->size;
     if (ctype_isfield(ct->info))
       ccall_classify_ct(cts, ctype_rawchild(cts, ct), rcl, fofs);
-    else if (ctype_isbitfield(ct->info))
+    else if (ctype_isbitfield(ct->info) && ctype_bitbsz(ct->info))
       rcl[(fofs >= 8)] |= CCALL_RCL_INT;  /* NYI: unaligned bitfields? */
     else if (ctype_isxattrib(ct->info, CTA_SUBTYPE))
       ccall_classify_struct(cts, ctype_rawchild(cts, ct), rcl, fofs);
@@ -789,8 +791,11 @@ static int ccall_struct_arg(CCallState *cc, CTState *cts, CType *d, int *rcl,
   if (ccall_struct_reg(cc, cts, dp, rcl)) {
     /* Register overflow? Pass on stack. */
     MSize nsp = cc->nsp, sz = rcl[1] ? 2*CTSIZE_PTR : CTSIZE_PTR;
+    MSize align = (1u << ctype_align(d->info)) - 1;
     if (nsp + sz > CCALL_SIZE_STACK)
       return 1;  /* Too many arguments. */
+    if (CCALL_ALIGN_STACKARG && align > CTSIZE_PTR-1)
+      nsp = (nsp + align) & ~align;  /* Align argument on stack. */
     cc->nsp = nsp + sz;
     memcpy((uint8_t *)cc->stack + nsp, dp, sz);
   }
@@ -865,37 +870,70 @@ noth:  /* Not a homogeneous float/double aggregate. */
 
 #if LJ_TARGET_ARM64
 
+#if !LJ_TARGET_OSX
+/* Alignment of pass-by-value structs: 8 or 16. */
+static CTInfo ccall_struct_align_arm64(CTState *cts, CType *ct)
+{
+  CTSize sz;
+  if (ct->sib) {
+    while (ct->sib) {
+      ct = ctype_get(cts, ct->sib);
+      if (ctype_isfield(ct->info)) {
+	if ((ct->info & CTF_ALIGN) > CTALIGN_PTR) return CTALIGN(4);
+      } else if (ctype_isxattrib(ct->info, CTA_SUBTYPE)) {
+	CType *sct = ctype_rawchild(cts, ct);
+	CTInfo info = lj_ctype_info(cts, ctype_typeid(cts, sct), &sz);
+	if ((info & CTF_ALIGN) > CTALIGN_PTR) return CTALIGN(4);
+      }
+    }
+  } else  {
+    CTInfo info = lj_ctype_info(cts, ctype_typeid(cts, ct), &sz);
+    if ((info & CTF_ALIGN) > CTALIGN_PTR) return CTALIGN(4);
+  }
+  return CTALIGN_PTR;
+}
+#define ccall_struct_align(cts, ct)	ccall_struct_align_arm64((cts), (ct))
+#endif
+
 /* Classify a struct based on its fields. */
 static unsigned int ccall_classify_struct(CTState *cts, CType *ct)
 {
   CTSize sz = ct->size;
   unsigned int r = 0, n = 0, isu = (ct->info & CTF_UNION);
-  while (ct->sib) {
+  while (ct->sib && n <= 4) {
+    unsigned int m = 1;
     CType *sct;
     ct = ctype_get(cts, ct->sib);
     if (ctype_isfield(ct->info)) {
       sct = ctype_rawchild(cts, ct);
+      if (ctype_isarray(sct->info) && !sct->size) goto noth;
+      while (ctype_isarray(sct->info)) {
+	CType *cct = ctype_rawchild(cts, sct);
+	m *= sct->size / cct->size;
+	sct = cct;
+      }
       if (ctype_isfp(sct->info)) {
 	r |= sct->size;
-	if (!isu) n++; else if (n == 0) n = 1;
+	if (!isu) n += m; else if (n < m) n = m;
       } else if (ctype_iscomplex(sct->info)) {
 	r |= (sct->size >> 1);
-	if (!isu) n += 2; else if (n < 2) n = 2;
+	if (!isu) n += 2*m; else if (n < 2*m) n = 2*m;
       } else if (ctype_isstruct(sct->info)) {
 	goto substruct;
       } else {
 	goto noth;
       }
-    } else if (ctype_isbitfield(ct->info)) {
+    } else if (ctype_isbitfield(ct->info) && ctype_bitbsz(ct->info)) {
       goto noth;
     } else if (ctype_isxattrib(ct->info, CTA_SUBTYPE)) {
       sct = ctype_rawchild(cts, ct);
     substruct:
       if (sct->size > 0) {
-	unsigned int s = ccall_classify_struct(cts, sct);
+	unsigned int s = ccall_classify_struct(cts, sct), sn;
 	if (s <= 1) goto noth;
 	r |= (s & 255);
-	if (!isu) n += (s >> 8); else if (n < (s >>8)) n = (s >> 8);
+	sn = (s >> 8) * m;
+	if (!isu) n += sn; else if (n < sn) n = sn;
       }
     }
   }
@@ -1023,13 +1061,17 @@ noth:  /* Not a homogeneous float/double aggregate. */
   return (sz <= 16);  /* Return structs of size <= 16 in GPRs. */
 }
 
-
 #endif
 
-
+#ifndef ccall_struct_align
+/* Alignment of pass-by-value structs. */
+#define ccall_struct_align(cts, ct)	((ct)->info & CTF_ALIGN)
+#endif
 /* -- Common C call handling ---------------------------------------------- */
 
-/* Infer the destination CTypeID for a vararg argument. */
+/* Infer the destination CTypeID for a vararg argument.
+** Note: may reallocate cts->tab and invalidate CType pointers.
+*/
 CTypeID lj_ccall_ctid_vararg(CTState *cts, cTValue *o)
 {
   if (tvisnumber(o)) {
@@ -1057,13 +1099,16 @@ CTypeID lj_ccall_ctid_vararg(CTState *cts, cTValue *o)
   }
 }
 
-/* Setup arguments for C call. */
+/* Setup arguments for C call.
+** Note: may reallocate cts->tab and invalidate CType pointers.
+*/
 static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 			  CCallState *cc)
 {
   int gcsteps = 0;
   TValue *o, *top = L->top;
   CTypeID fid;
+  CTInfo info = ct->info;  /* lj_ccall_ctid_vararg may invalidate ct pointer. */
   CType *ctr;
   MSize maxgpr, ngpr = 0, nsp = 0, narg;
 #if CCALL_NARG_FPR
@@ -1084,7 +1129,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 #if LJ_TARGET_X86
   /* x86 has several different calling conventions. */
   cc->resx87 = 0;
-  switch (ctype_cconv(ct->info)) {
+  switch (ctype_cconv(info)) {
   case CTCC_FASTCALL: maxgpr = 2; break;
   case CTCC_THISCALL: maxgpr = 1; break;
   default: maxgpr = 0; break;
@@ -1101,7 +1146,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
   } else if (ctype_iscomplex(ctr->info) || ctype_isstruct(ctr->info)) {
     /* Preallocate cdata object and anchor it after arguments. */
     CTSize sz = ctr->size;
-    GCcdata *cd = lj_cdata_new(cts, ctype_cid(ct->info), sz);
+    GCcdata *cd = lj_cdata_new(cts, ctype_cid(info), sz);
     void *dp = cdataptr(cd);
     setcdataV(L, L->top++, cd);
     if (ctype_isstruct(ctr->info)) {
@@ -1124,7 +1169,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
   }
 
 #if LJ_TARGET_ARM64 && LJ_ABI_WIN
-  if ((ct->info & CTF_VARARG)) {
+  if ((info & CTF_VARARG)) {
     nsp -= maxgpr * CTSIZE_PTR;  /* May end up with negative nsp. */
     ngpr = maxgpr;
     nfpr = CCALL_NARG_FPR;
@@ -1138,6 +1183,9 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
     CTSize sz;
     MSize n, isfp = 0, isva = 0;
     void *dp, *rp = NULL;
+#if LJ_TARGET_X64 && !LJ_ABI_WIN
+    int onstack = 0;
+#endif
 
     if (fid) {  /* Get argument type from field. */
       CType *ctf = ctype_get(cts, fid);
@@ -1145,7 +1193,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
       lj_assertL(ctype_isfield(ctf->info), "field expected");
       did = ctype_cid(ctf->info);
     } else {
-      if (!(ct->info & CTF_VARARG))
+      if (!(info & CTF_VARARG))
 	lj_err_caller(L, LJ_ERR_FFI_NUMARG);  /* Too many arguments. */
       did = lj_ccall_ctid_vararg(cts, o);  /* Infer vararg type. */
       isva = 1;
@@ -1176,7 +1224,10 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 
     /* Otherwise pass argument on stack. */
     if (CCALL_ALIGN_STACKARG) {  /* Align argument on stack. */
-      MSize align = (1u << ctype_align(d->info)) - 1;
+      MSize align = (1u << ctype_align(ccall_struct_align(cts, d))) - 1;
+#if LJ_TARGET_ARM64 && LJ_TARGET_OSX
+      isva = ctype_isstruct(d->info);
+#endif
       if (rp || (CCALL_PACK_STACKARG && isva && align < CTSIZE_PTR-1))
 	align = CTSIZE_PTR-1;
       nsp = (nsp + align) & ~align;
@@ -1324,11 +1375,11 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
     ct = ctype_rawchild(cts, ct);
   }
   if (ctype_isfunc(ct->info)) {
+    CTypeID id = ctype_typeid(cts, ct);
     CCallState cc;
     int gcsteps, ret;
     cc.func = (void (*)(void))cdata_getptr(cdataptr(cd), sz);
     gcsteps = ccall_set_args(L, cts, ct, &cc);
-    ct = (CType *)((intptr_t)ct-(intptr_t)cts->tab);
     cts->cb.slot = ~0u;
     lj_vm_ffi_call(&cc);
     if (cts->cb.slot != ~0u) {  /* Blacklist function that called a callback. */
@@ -1336,7 +1387,7 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
       tv.u64 = ((uintptr_t)(void *)cc.func >> 2) | U64x(800000000, 00000000);
       setboolV(lj_tab_set(L, cts->miscmap, &tv), 1);
     }
-    ct = (CType *)((intptr_t)ct+(intptr_t)cts->tab);  /* May be reallocated. */
+    ct = ctype_get(cts, id);  /* Table may have been reallocated. */
     gcsteps += ccall_get_results(L, cts, ct, &cc, &ret);
 #if LJ_TARGET_X86 && LJ_ABI_WIN
     /* Automatically detect __stdcall and fix up C function declaration. */
