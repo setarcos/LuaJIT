@@ -361,11 +361,11 @@ enum {
   LJ_K64_TOBIT,		/* 2^52 + 2^51 */
   LJ_K64_2P64,		/* 2^64 */
 #endif
-#if LJ_TARGET_MIPS64 || LJ_TARGET_LOONGARCH64
-  LJ_K64_2P63,		/* 2^63 */
-#endif
 #if LJ_TARGET_MIPS || LJ_TARGET_LOONGARCH64
   LJ_K64_2P31,		/* 2^31 */
+#if LJ_64
+  LJ_K64_2P63,		/* 2^63 */
+#endif
 #endif
 #if LJ_TARGET_ARM64 || LJ_TARGET_MIPS64
   LJ_K64_VM_EXIT_HANDLER,

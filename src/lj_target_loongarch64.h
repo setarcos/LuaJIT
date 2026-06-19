@@ -1,6 +1,7 @@
 /*
 ** Definitions for LoongArch CPUs.
 ** Copyright (C) 2005-2025 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2025 Loongson Technology. All rights reserved.
 */
 
 #ifndef _LJ_TARGET_LOONGARCH_H
@@ -18,6 +19,8 @@
   _(F8) _(F9) _(F10) _(F11) _(F12) _(F13) _(F14) _(F15) \
   _(F16) _(F17) _(F18) _(F19) _(F20) _(F21) _(F22) _(F23) \
   _(F24) _(F25) _(F26) _(F27) _(F28) _(F29) _(F30) _(F31)
+#define CFRDEF(_) \
+  _(FCC0) _(FCC1) _(FCC2) _(FCC3) _(FCC4) _(FCC5) _(FCC6) _(FCC7)
 #define VRIDDEF(_)
 
 #define RIDENUM(name)	RID_##name,
@@ -25,6 +28,7 @@
 enum {
   GPRDEF(RIDENUM)		/* General-purpose registers (GPRs). */
   FPRDEF(RIDENUM)		/* Floating-point registers (FPRs). */
+  CFRDEF(RIDENUM)		/* Condition-flags registers (CFRs). */
   RID_MAX,
   RID_ZERO = RID_R0,
   RID_TMP = RID_RA,
@@ -42,7 +46,7 @@ enum {
   RID_LPC = RID_R25,		/* Interpreter PC. */
   RID_DISPATCH = RID_R26,	/* Interpreter DISPATCH table. */
   RID_LREG = RID_R27,		/* Interpreter L. */
-  RID_JGL = RID_R22,		/* On-trace: global_State + 32768. */
+  RID_JGL = RID_R22,		/* On-trace: global_State. */
 
   /* Register ranges [min, max) and number of registers. */
   RID_MIN_GPR = RID_R0,
@@ -68,7 +72,7 @@ enum {
 #define RSET_INIT	RSET_ALL
 
 /* scratch register. */
-#define RSET_SCRATCH_GPR	RSET_RANGE(RID_R4, RID_R20+1)
+#define RSET_SCRATCH_GPR	(RSET_RANGE(RID_R4, RID_R20+1))
 #define RSET_SCRATCH_FPR	RSET_RANGE(RID_F0, RID_F23+1)
 #define RSET_SCRATCH		(RSET_SCRATCH_GPR|RSET_SCRATCH_FPR)
 #define REGARG_FIRSTGPR		RID_R4
@@ -108,14 +112,15 @@ typedef struct {
 #define EXITSTATE_CHECKEXIT	1
 
 /* Return the address of a per-trace exit stub. */
-static LJ_AINLINE uint32_t *exitstub_trace_addr_(uint32_t *p)
+static LJ_AINLINE uint32_t *exitstub_trace_addr_(uint32_t *p, uint32_t exitno)
 {
   while (*p == 0x03400000) p++;		/* Skip LOONGI_NOP. */
-  return p;
+  return p + 5 + exitno;
 }
+
 /* Avoid dependence on lj_jit.h if only including lj_target.h. */
 #define exitstub_trace_addr(T, exitno) \
-  exitstub_trace_addr_((MCode *)((char *)(T)->mcode + (T)->szmcode))
+  exitstub_trace_addr_((MCode *)((char *)(T)->mcode + (T)->szmcode), (exitno))
 
 /* -- Instructions -------------------------------------------------------- */
 
@@ -124,15 +129,21 @@ static LJ_AINLINE uint32_t *exitstub_trace_addr_(uint32_t *p)
 #define LOONGF_J(r)	((r) << 5)
 #define LOONGF_K(r)	((r) << 10)
 #define LOONGF_A(r)	((r) << 15)
-#define LOONGF_I(n)	((n) << 10)
-#define LOONGF_I20(n)	((n) << 5)
-#define LOONGF_M(n)	((n) << 16)
+#define LOONGF_I5(n)	(((uint32_t)(n) & 0x1fu) << 10)
+#define LOONGF_I6(n)	(((uint32_t)(n) & 0x3fu) << 10)
+#define LOONGF_I12(n)	(((uint32_t)(n) & 0xfffu) << 10)
+#define LOONGF_I16(n)	(((uint32_t)(n) & 0xffffu) << 10)
+#define LOONGF_I20(n)	(((uint32_t)(n) & 0xfffffu) << 5)
+#define LOONGF_I21(n)	((LOONGF_I16(n)) | (((uint32_t)(n) >> 16) & 0x1fu))
+#define LOONGF_I26(n)	((LOONGF_I16(n)) | (((uint32_t)(n) >> 16) & 0x3ffu))
+#define LOONGF_M(n)	(((uint32_t)(n) & 0x3fu) << 16)
+#define LOONGF_L(n)	(((uint32_t)(n) & 0x3fu) << 10)
 
 /* Check for valid field range. */
 #define LOONGF_S_OK(x, b) ((((x) + (1 << (b-1))) >> (b)) == 0)
 
 typedef enum LOONGIns {
-/* Integer instructions. */
+  /* Integer instructions. */
   LOONGI_MOVE = 0x00150000,
   LOONGI_NOP = 0x03400000,
 
@@ -154,6 +165,7 @@ typedef enum LOONGIns {
   LOONGI_SUB_W = 0x00110000,
   LOONGI_MUL_W = 0x001c0000,
   LOONGI_MULH_W = 0x001c8000,
+  LOONGI_MULW_D_W = 0x001f0000,
   LOONGI_DIV_W = 0x00200000,
   LOONGI_DIV_WU = 0x00210000,
 
@@ -186,6 +198,8 @@ typedef enum LOONGIns {
   LOONGI_BGE = 0x64000000,
   LOONGI_BGEU = 0x6c000000,
   LOONGI_BLTU = 0x68000000,
+  LOONGI_BEQZ = 0x40000000,
+  LOONGI_BNEZ = 0x44000000,
   LOONGI_BCEQZ = 0x48000000,
   LOONGI_BCNEZ = 0x48000100,
 
@@ -208,7 +222,7 @@ typedef enum LOONGIns {
   LOONGI_STX_D = 0x381c0000,
   LOONGI_LDX_W = 0x38080000,
   LOONGI_STX_W = 0x38180000,
-  LOONGI_STX_B = 0x38100000, 
+  LOONGI_STX_B = 0x38100000,
   LOONGI_STX_H = 0x38140000,
   LOONGI_FLD_S = 0x2b000000,
   LOONGI_FST_S = 0x2b400000,
@@ -309,4 +323,3 @@ typedef enum LOONGIns {
 } LOONGIns;
 
 #endif
-

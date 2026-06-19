@@ -1,7 +1,8 @@
 ------------------------------------------------------------------------------
 -- DynASM LoongArch module.
 --
--- Copyright (C) 2005-2022 Mike Pall. All rights reserved.
+-- Copyright (C) 2005-2025 Mike Pall. All rights reserved.
+-- Copyright (C) 2025 Loongson Technology. All rights reserved.
 -- See dynasm.lua for full copyright notice.
 ------------------------------------------------------------------------------
 
@@ -318,11 +319,11 @@ local map_op = {
   ["movfr2gr.s_2"] =	"0114b400DG",
   ["movfr2gr.d_2"] =	"0114b800DG",
   ["movfrh2gr.s_2"] =	"0114bc00DG",
-  movgr2fcsr_2 =	"0114c000SG",
-  movfcsr2gr_2 =	"0114c800FR",
+  movgr2fcsr_2 =	"0114c000SJ",
+  movfcsr2gr_2 =	"0114c800DR",
   movfr2cf_2 =		"0114d000EG",
   movcf2fr_2 =		"0114d400FA",
-  movgr2cf_2 =		"0114d800EG",
+  movgr2cf_2 =		"0114d800EJ",
   movcf2gr_2 =		"0114dc00DA",
   ["fcvt.ld.d_2"] =	"0114e000FG",
   ["fcvt.ud.d_2"] =	"0114e400FG",
@@ -658,12 +659,12 @@ local function parse_imm21or26(imm, i)
       if s == 0 then
         return shl(sub(m, 1, 16), 10) + shl(sub(m, 17, i), 0)
       elseif s == -1 then
-        return shl(sub(m, 1, 16), 10) + shl(sub(m, 17, i), 0)
+        return shl(sub(m, 1, 16), 10) + shl(sub(m, 17, i), 0)	--TODO
       end
     end
     werror("out of range immediate2 `"..imm.."'")
   else
-    waction("IMM2", 0, imm)
+    waction("IMM2", 0, imm)	--TODO
     return 0
   end
 end

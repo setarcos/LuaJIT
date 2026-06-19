@@ -352,7 +352,7 @@
       nfpr = CCALL_NARG_FPR;  /* Prevent reordering. */ \
     } \
   } else {  /* Try to pass argument in GPRs. */ \
-    if (!LJ_TARGET_OSX && !rp && ccall_struct_align(cts, d) > CTALIGN_PTR) \
+    if (!LJ_TARGET_OSX && !rp && (d->info & CTF_ALIGN) > CTALIGN_PTR) \
       ngpr = (ngpr + 1u) & ~1u;  /* Align to regpair. */ \
     if (ngpr + n <= maxgpr) { \
       dp = &cc->gpr[ngpr]; \
@@ -1063,10 +1063,6 @@ noth:  /* Not a homogeneous float/double aggregate. */
 
 #endif
 
-#ifndef ccall_struct_align
-/* Alignment of pass-by-value structs. */
-#define ccall_struct_align(cts, ct)	((ct)->info & CTF_ALIGN)
-#endif
 /* -- Common C call handling ---------------------------------------------- */
 
 /* Infer the destination CTypeID for a vararg argument.
@@ -1224,7 +1220,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 
     /* Otherwise pass argument on stack. */
     if (CCALL_ALIGN_STACKARG) {  /* Align argument on stack. */
-      MSize align = (1u << ctype_align(ccall_struct_align(cts, d))) - 1;
+      MSize align = (1u << ctype_align(d->info)) - 1;
 #if LJ_TARGET_ARM64 && LJ_TARGET_OSX
       isva = ctype_isstruct(d->info);
 #endif
